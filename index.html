@@ -179,9 +179,42 @@
     }
     .btn-submit:hover:not(:disabled) { background: #333; }
     .btn-submit:disabled { background: #999; cursor: not-allowed; }
+    /* ── LOGIN ── */
+    #login-screen {
+      position: fixed; inset: 0; background: #fff; z-index: 9999;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .login-box {
+      width: 100%; max-width: 320px; padding: 0 24px;
+      display: flex; flex-direction: column; align-items: center; gap: 16px;
+    }
+    .login-logo { font-size: 3rem; font-weight: 900; letter-spacing: -3px; margin-bottom: 8px; }
+    .login-box input[type="password"] {
+      width: 100%; border: 1.5px solid #ccc; border-radius: 8px;
+      padding: 12px 16px; font-size: 1.1rem; text-align: center;
+      letter-spacing: 4px; outline: none; transition: border-color .15s;
+    }
+    .login-box input[type="password"]:focus { border-color: #000; }
+    .login-btn {
+      width: 100%; background: #000; color: #fff; border: none; border-radius: 8px;
+      padding: 12px; font-size: 0.95rem; font-weight: 700; cursor: pointer;
+      font-family: inherit; transition: background .15s;
+    }
+    .login-btn:hover { background: #333; }
+    .login-err { font-size: 0.8rem; color: #c00; min-height: 1em; }
   </style>
 </head>
 <body>
+
+<!-- LOGIN -->
+<div id="login-screen">
+  <div class="login-box">
+    <div class="login-logo">MI</div>
+    <input type="password" id="login-pw" placeholder="パスワード" onkeydown="if(event.key==='Enter')doLogin()" />
+    <button class="login-btn" onclick="doLogin()">ログイン</button>
+    <div class="login-err" id="login-err"></div>
+  </div>
+</div>
 
 <header>
   <div class="logo">MI</div>
@@ -491,7 +524,7 @@ async function submitPost() {
         setProgress(40, true);
         const fname = `${Date.now()}_${Math.random().toString(36).slice(2)}.pdf`;
         const { error: upErr } = await db.storage.from('pdf').upload(fname, pdfFile, { contentType: 'application/pdf' });
-        if (upErr) throw new Error('PDFのアップロードに失敗しました。Supabase Storage に "pdfs" バケットが存在するか確認してください。(' + upErr.message + ')');
+        if (upErr) throw new Error('PDFのアップロードに失敗しました: ' + upErr.message);
         href = db.storage.from('pdf').getPublicUrl(fname).data.publicUrl;
       } else if (!editingId) {
         throw new Error('PDFファイルを選択してください');
@@ -529,8 +562,25 @@ function setProgress(pct, show) {
 function showErr(msg) { const el = document.getElementById('err-msg'); el.textContent = msg; el.style.display = 'block'; }
 function hideErr()    { document.getElementById('err-msg').style.display = 'none'; }
 
+// ── Login ──────────────────────────────────────────────────────────────────
+const _PW = '111';
+function doLogin() {
+  const val = document.getElementById('login-pw').value;
+  if (val === _PW) {
+    sessionStorage.setItem('mi_auth', '1');
+    document.getElementById('login-screen').style.display = 'none';
+  } else {
+    document.getElementById('login-err').textContent = 'パスワードが違います';
+    document.getElementById('login-pw').value = '';
+    document.getElementById('login-pw').focus();
+  }
+}
+
 // ── Boot ───────────────────────────────────────────────────────────────────
 function init() {
+  if (sessionStorage.getItem('mi_auth') === '1') {
+    document.getElementById('login-screen').style.display = 'none';
+  }
   buildIconGrids();
   setIconSelection(ICONS[0], 'url-icon-grid');
   setIconSelection(ICONS[0], 'pdf-icon-grid');
