@@ -227,27 +227,29 @@ const postMap = {};
 // ── Icons ──────────────────────────────────────────────────────────────────
 const ICONS = ['📊','📈','📋','📁','📌','📣','💡','🎯','✅','🔔','📧','📝',
                '🏆','👥','💼','🛒','💰','🔍','⚙️','🌐','📱','🤝','🎉','❤️'];
-let selectedIcon = ICONS[0];
 
 function buildIconGrids() {
   ['url-icon-grid','pdf-icon-grid'].forEach(gid => {
-    const grid = document.getElementById(gid);
-    grid.innerHTML = ICONS.map(ic =>
+    document.getElementById(gid).innerHTML = ICONS.map(ic =>
       `<button type="button" class="icon-btn" data-icon="${ic}" onclick="selectIcon(this,'${gid}')">${ic}</button>`
     ).join('');
   });
 }
 
 function selectIcon(btn, gid) {
-  document.querySelectorAll(`#${gid} .icon-btn`).forEach(b => b.classList.remove('chosen'));
+  document.querySelectorAll('#' + gid + ' .icon-btn').forEach(b => b.classList.remove('chosen'));
   btn.classList.add('chosen');
-  selectedIcon = btn.dataset.icon;
+}
+
+function getSelectedIcon(gid) {
+  const btn = document.querySelector('#' + gid + ' .icon-btn.chosen');
+  return btn ? btn.dataset.icon : ICONS[0];
 }
 
 function setIconSelection(icon, gid) {
-  const target = icon || ICONS[0];
-  selectedIcon = target;
-  document.querySelectorAll(`#${gid} .icon-btn`).forEach(b => {
+  // ICONS内の絵文字と一致するものを選択、なければ先頭
+  const target = ICONS.includes(icon) ? icon : ICONS[0];
+  document.querySelectorAll('#' + gid + ' .icon-btn').forEach(b => {
     b.classList.toggle('chosen', b.dataset.icon === target);
   });
 }
@@ -422,12 +424,12 @@ async function submitPost() {
       const desc  = document.getElementById('url-desc').value.trim();
       if (!title) throw new Error('タイトルを入力してください');
       if (!url || !/^https?:\/\/.+/.test(url)) throw new Error('有効なURLを入力してください');
-      payload = { title, href: url, description: desc || null, thumbnail_url: selectedIcon, type: 'url' };
+      payload = { title, href: url, description: desc || null, thumbnail_url: getSelectedIcon('url-icon-grid'), type: 'url' };
     } else {
       const title = document.getElementById('pdf-title').value.trim();
       const desc  = document.getElementById('pdf-desc').value.trim();
       if (!title) throw new Error('タイトルを入力してください');
-      payload = { title, href: null, description: desc || null, thumbnail_url: selectedIcon, type: 'pdf' };
+      payload = { title, href: null, description: desc || null, thumbnail_url: getSelectedIcon('pdf-icon-grid'), type: 'pdf' };
     }
 
     setProgress(80, true);
