@@ -143,6 +143,18 @@
     input:focus, textarea:focus { border-color: #000; }
     textarea { min-height: 70px; resize: vertical; }
 
+    /* ── FILE PICK ── */
+    .file-pick-wrap { display: flex; align-items: center; gap: 10px; margin-top: 6px; }
+    .file-pick-btn {
+      display: inline-block; background: #f0f0f0; border: 1.5px solid #ccc; border-radius: 6px;
+      padding: 8px 14px; font-size: 0.82rem; font-weight: 700; cursor: pointer;
+      white-space: nowrap; transition: background .15s; font-family: inherit;
+    }
+    .file-pick-btn:hover { background: #e0e0e0; border-color: #999; }
+    .file-name-label { font-size: 0.78rem; color: #666; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+    .pdf-current-wrap { font-size: 0.78rem; color: #555; margin-top: 6px; }
+    .pdf-current-wrap a { color: #2a7a2a; font-weight: 700; text-decoration: underline; }
+
     /* ── ICON PICKER ── */
     .icon-grid {
       display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; margin-top: 6px;
@@ -215,6 +227,15 @@
     <div id="form-pdf" style="display:none">
       <label>タイトル *</label>
       <input type="text" id="pdf-title" placeholder="資料タイトル" maxlength="100" />
+      <label>PDFファイル *</label>
+      <div class="file-pick-wrap">
+        <label class="file-pick-btn" for="pdf-file">📎 ファイルを選択</label>
+        <input type="file" id="pdf-file" accept=".pdf,application/pdf" style="display:none" onchange="onPdfPick(this)" />
+        <span id="pdf-file-name" class="file-name-label">未選択</span>
+      </div>
+      <div id="pdf-current" style="display:none" class="pdf-current-wrap">
+        現在のファイル: <a id="pdf-current-link" target="_blank" rel="noopener noreferrer">開く</a>（新しいファイルを選択すると差し替えます）
+      </div>
       <label>説明</label>
       <textarea id="pdf-desc" placeholder="内容の説明（任意）"></textarea>
       <label>アイコン</label>
@@ -239,6 +260,7 @@ let editingId = null;
 const postMap = {};
 let sortedIds = [];   // current display order
 let dragSrcId = null; // id being dragged
+let pdfFile   = null; // selected PDF file
 
 // ── Order (localStorage) ───────────────────────────────────────────────────
 const ORDER_KEY = 'mi_board_order';
@@ -399,6 +421,10 @@ function openEdit(id) {
     document.getElementById('pdf-title').value = p.title || '';
     document.getElementById('pdf-desc').value  = p.description || '';
     setIconSelection(p.thumbnail_url, 'pdf-icon-grid');
+    if (p.href) {
+      document.getElementById('pdf-current').style.display = '';
+      document.getElementById('pdf-current-link').href = p.href;
+    }
   } else {
     switchTab('url');
     document.getElementById('url-title').value = p.title || '';
@@ -422,7 +448,10 @@ function switchTab(t) {
 
 function resetForm() {
   ['url-title','url-link','url-desc','pdf-title','pdf-desc'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
-  editingId = null;
+  editingId = null; pdfFile = null;
+  const fi = document.getElementById('pdf-file'); if (fi) fi.value = '';
+  document.getElementById('pdf-file-name').textContent = '未選択';
+  document.getElementById('pdf-current').style.display = 'none';
   setProgress(0, false); hideErr();
   switchTab('url');
   setIconSelection(ICONS[0], 'url-icon-grid');
@@ -430,69 +459,12 @@ function resetForm() {
   document.getElementById('btn-submit').disabled = false;
 }
 
-// ── Image preview ──────────────────────────────────────────────────────────
-function previewImg(input, pid) {
-  const el = document.getElementById(pid);
-  if (!input.files[0]) return;
-  const reader = new FileReader();
-  reader.onload = e => { el.src = e.target.result; el.style.display = 'block'; };
-  reader.readAsDataURL(input.files[0]);
-}
-
-// ── PDF → JPEG thumbnail ───────────────────────────────────────────────────
-async function onPdfSelect(input) {
+function onPdfPick(input) {
   if (!input.files[0]) return;
   pdfFile = input.files[0];
-  document.getElementById('pdf-label').textContent = pdfFile.name;
-  try {
-    pdfThumb = await pdfFirstPageBlob(pdfFile);
-    const url = URL.createObjectURL(pdfThumb);
-    const prev = document.getElementById('pdf-preview');
-    prev.src = url; prev.style.display = 'block';
-  } catch { pdfThumb = null; }
+  document.getElementById('pdf-file-name').textContent = pdfFile.name;
 }
 
-async function pdfFirstPageBlob(file) {
-  const buf = await file.arrayBuffer();
-  const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
-  const page = await pdf.getPage(1);
-  const vp = page.getViewport({ scale: 1.5 });
-  const canvas = document.createElement('canvas');
-  canvas.width = vp.width; canvas.height = vp.height;
-  const ctx = canvas.getContext('2d');
-  ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, canvas.width, canvas.height);
-  await page.render({ canvasContext: ctx, viewport: vp }).promise;
-  return new Promise(res => canvas.toBlob(res, 'image/jpeg', 0.85));
-}
-
-// ── Blob → base64 data URL ─────────────────────────────────────────────────
-function toDataUrl(blob) {
-  return new Promise((res, rej) => {
-    const r = new FileReader();
-    r.onload = e => res(e.target.result);
-    r.onerror = rej;
-    r.readAsDataURL(blob);
-  });
-}
-
-// ── Image → compressed JPEG blob ──────────────────────────────────────────
-function compressImage(file) {
-  return new Promise((res, rej) => {
-    const img = new Image();
-    const url = URL.createObjectURL(file);
-    img.onload = () => {
-      const MAX = 800;
-      let w = img.width, h = img.height;
-      if (w > MAX) { h = Math.round(h * MAX / w); w = MAX; }
-      const c = document.createElement('canvas');
-      c.width = w; c.height = h;
-      c.getContext('2d').drawImage(img, 0, 0, w, h);
-      URL.revokeObjectURL(url);
-      c.toBlob(res, 'image/jpeg', 0.85);
-    };
-    img.onerror = rej; img.src = url;
-  });
-}
 
 // ── Submit ─────────────────────────────────────────────────────────────────
 async function submitPost() {
@@ -514,7 +486,17 @@ async function submitPost() {
       const title = document.getElementById('pdf-title').value.trim();
       const desc  = document.getElementById('pdf-desc').value.trim();
       if (!title) throw new Error('タイトルを入力してください');
-      payload = { title, href: null, description: desc || null, thumbnail_url: getSelectedIcon('pdf-icon-grid'), type: 'pdf' };
+      let href = editingId ? (postMap[editingId]?.href || null) : null;
+      if (pdfFile) {
+        setProgress(40, true);
+        const fname = `${Date.now()}_${Math.random().toString(36).slice(2)}.pdf`;
+        const { error: upErr } = await db.storage.from('pdfs').upload(fname, pdfFile, { contentType: 'application/pdf' });
+        if (upErr) throw new Error('PDFのアップロードに失敗しました。Supabase Storage に "pdfs" バケットが存在するか確認してください。(' + upErr.message + ')');
+        href = db.storage.from('pdfs').getPublicUrl(fname).data.publicUrl;
+      } else if (!editingId) {
+        throw new Error('PDFファイルを選択してください');
+      }
+      payload = { title, href, description: desc || null, thumbnail_url: getSelectedIcon('pdf-icon-grid'), type: 'pdf' };
     }
 
     setProgress(80, true);
