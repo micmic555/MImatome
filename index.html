@@ -5,7 +5,6 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>MI 社内掲示板</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -130,19 +129,17 @@
     input:focus, textarea:focus { border-color: #000; }
     textarea { min-height: 70px; resize: vertical; }
 
-    .file-drop {
-      border: 2px dashed #ccc; border-radius: 8px; padding: 22px 16px;
-      text-align: center; font-size: 0.82rem; color: #888; cursor: pointer;
-      transition: border-color .15s, background .15s; position: relative;
+    /* ── ICON PICKER ── */
+    .icon-grid {
+      display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; margin-top: 6px;
     }
-    .file-drop:hover, .file-drop.drag { border-color: #000; background: #fafafa; }
-    .file-drop input[type="file"] {
-      position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%;
+    .icon-btn {
+      aspect-ratio: 1; border: 2px solid #e0e0e0; border-radius: 8px; background: #fafafa;
+      font-size: 1.5rem; cursor: pointer; display: flex; align-items: center;
+      justify-content: center; transition: border-color .15s, background .15s;
     }
-    .file-preview {
-      width: 100%; max-height: 130px; object-fit: cover;
-      border-radius: 6px; margin-top: 10px; display: none;
-    }
+    .icon-btn:hover  { border-color: #999; background: #f0f0f0; }
+    .icon-btn.chosen { border-color: #000; background: #f0f0f0; box-shadow: 0 0 0 2px #000; }
 
     .progress-wrap { height: 4px; background: #eee; border-radius: 2px; overflow: hidden; margin-top: 12px; display: none; }
     .progress-bar { height: 100%; background: #000; width: 0%; transition: width .3s; }
@@ -196,26 +193,18 @@
       <input type="url" id="url-link" placeholder="https://example.com" />
       <label>説明</label>
       <textarea id="url-desc" placeholder="内容の説明（任意）"></textarea>
-      <label>サムネイル画像（任意）</label>
-      <div class="file-drop" id="url-drop">
-        <span>クリックまたはドラッグ&amp;ドロップ<br/><small>JPG / PNG / WEBP</small></span>
-        <input type="file" id="url-file" accept="image/*" onchange="previewImg(this,'url-preview')" />
-        <img class="file-preview" id="url-preview" alt="" />
-      </div>
+      <label>アイコン</label>
+      <div class="icon-grid" id="url-icon-grid"></div>
     </div>
 
     <!-- PDF フォーム -->
     <div id="form-pdf" style="display:none">
       <label>タイトル *</label>
       <input type="text" id="pdf-title" placeholder="資料タイトル" maxlength="100" />
-      <label>PDFファイル *</label>
-      <div class="file-drop" id="pdf-drop">
-        <span id="pdf-label">クリックまたはドラッグ&amp;ドロップ<br/><small>PDF ファイル</small></span>
-        <input type="file" id="pdf-file" accept="application/pdf" onchange="onPdfSelect(this)" />
-        <img class="file-preview" id="pdf-preview" alt="" />
-      </div>
       <label>説明</label>
       <textarea id="pdf-desc" placeholder="内容の説明（任意）"></textarea>
+      <label>アイコン</label>
+      <div class="icon-grid" id="pdf-icon-grid"></div>
     </div>
 
     <div class="progress-wrap" id="progress-wrap"><div class="progress-bar" id="progress-bar"></div></div>
@@ -230,16 +219,38 @@ const _url = 'https://qvtgvqfdiiawqessyflz.supabase.co';
 const _key = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF2dGd2cWZkaWlhd3Flc3N5Zmx6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODAwMjM4MTQsImV4cCI6MjA5NTU5OTgxNH0.n870a4Zo4ObnOWeiD14vbPKZYt3SepcZlZLPexQlvpU';
 const db   = supabase.createClient(_url, _key);
 
-// ── PDF.js ─────────────────────────────────────────────────────────────────
-pdfjsLib.GlobalWorkerOptions.workerSrc =
-  'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
-
 // ── State ──────────────────────────────────────────────────────────────────
-let tab        = 'url';
-let pdfFile    = null;
-let pdfThumb   = null;  // Blob
-let editingId  = null;  // 編集中の投稿ID (null = 新規)
-const postMap  = {};    // id → post object
+let tab       = 'url';
+let editingId = null;
+const postMap = {};
+
+// ── Icons ──────────────────────────────────────────────────────────────────
+const ICONS = ['📊','📈','📋','📁','📌','📣','💡','🎯','✅','🔔','📧','📝',
+               '🏆','👥','💼','🛒','💰','🔍','⚙️','🌐','📱','🤝','🎉','❤️'];
+let selectedIcon = ICONS[0];
+
+function buildIconGrids() {
+  ['url-icon-grid','pdf-icon-grid'].forEach(gid => {
+    const grid = document.getElementById(gid);
+    grid.innerHTML = ICONS.map(ic =>
+      `<button type="button" class="icon-btn" data-icon="${ic}" onclick="selectIcon(this,'${gid}')">${ic}</button>`
+    ).join('');
+  });
+}
+
+function selectIcon(btn, gid) {
+  document.querySelectorAll(`#${gid} .icon-btn`).forEach(b => b.classList.remove('chosen'));
+  btn.classList.add('chosen');
+  selectedIcon = btn.dataset.icon;
+}
+
+function setIconSelection(icon, gid) {
+  const target = icon || ICONS[0];
+  selectedIcon = target;
+  document.querySelectorAll(`#${gid} .icon-btn`).forEach(b => {
+    b.classList.toggle('chosen', b.dataset.icon === target);
+  });
+}
 
 // ── Posts ──────────────────────────────────────────────────────────────────
 async function loadPosts() {
@@ -260,10 +271,9 @@ async function loadPosts() {
 
 function cardHtml(p) {
   const date  = new Date(p.created_at).toLocaleDateString('ja-JP', { year:'numeric', month:'short', day:'numeric' });
-  const icon  = p.type === 'pdf' ? '📄' : '🔗';
   const thumb = p.thumbnail_url
-    ? `<img class="card-thumb" src="${esc(p.thumbnail_url)}" alt="" loading="lazy">`
-    : `<div class="card-placeholder">${icon}</div>`;
+    ? `<div class="card-placeholder" style="font-size:3.5rem">${p.thumbnail_url}</div>`
+    : `<div class="card-placeholder">${p.type === 'pdf' ? '📄' : '🔗'}</div>`;
   const aHref = p.href ? `href="${esc(p.href)}" target="_blank" rel="noopener noreferrer"` : '';
   return `
     <div class="card-wrap">
@@ -301,19 +311,13 @@ function openEdit(id) {
     switchTab('pdf');
     document.getElementById('pdf-title').value = p.title || '';
     document.getElementById('pdf-desc').value  = p.description || '';
-    if (p.thumbnail_url) {
-      const prev = document.getElementById('pdf-preview');
-      prev.src = p.thumbnail_url; prev.style.display = 'block';
-    }
+    setIconSelection(p.thumbnail_url, 'pdf-icon-grid');
   } else {
     switchTab('url');
     document.getElementById('url-title').value = p.title || '';
     document.getElementById('url-link').value  = p.href  || '';
     document.getElementById('url-desc').value  = p.description || '';
-    if (p.thumbnail_url) {
-      const prev = document.getElementById('url-preview');
-      prev.src = p.thumbnail_url; prev.style.display = 'block';
-    }
+    setIconSelection(p.thumbnail_url, 'url-icon-grid');
   }
   document.getElementById('overlay').classList.add('open');
   document.body.style.overflow = 'hidden';
@@ -331,14 +335,11 @@ function switchTab(t) {
 
 function resetForm() {
   ['url-title','url-link','url-desc','pdf-title','pdf-desc'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
-  document.getElementById('url-file').value = '';
-  document.getElementById('url-preview').style.display = 'none';
-  document.getElementById('pdf-file').value = '';
-  document.getElementById('pdf-preview').style.display = 'none';
-  document.getElementById('pdf-label').innerHTML = 'クリックまたはドラッグ&amp;ドロップ<br/><small>PDF ファイル</small>';
-  pdfFile = null; pdfThumb = null; editingId = null;
+  editingId = null;
   setProgress(0, false); hideErr();
   switchTab('url');
+  setIconSelection(ICONS[0], 'url-icon-grid');
+  setIconSelection(ICONS[0], 'pdf-icon-grid');
   document.getElementById('btn-submit').disabled = false;
 }
 
@@ -419,41 +420,19 @@ async function submitPost() {
       const title = document.getElementById('url-title').value.trim();
       const url   = document.getElementById('url-link').value.trim();
       const desc  = document.getElementById('url-desc').value.trim();
-      const file  = document.getElementById('url-file').files[0];
-
       if (!title) throw new Error('タイトルを入力してください');
       if (!url || !/^https?:\/\/.+/.test(url)) throw new Error('有効なURLを入力してください');
-
-      let thumbnail_url = null;
-      if (file) {
-        setProgress(40, true);
-        const blob = await compressImage(file);
-        thumbnail_url = await toDataUrl(blob);
-      }
-      setProgress(80, true);
-      payload = { title, href: url, description: desc || null, thumbnail_url, type: 'url' };
-      if (!file && editingId) delete payload.thumbnail_url;
-
+      payload = { title, href: url, description: desc || null, thumbnail_url: selectedIcon, type: 'url' };
     } else {
       const title = document.getElementById('pdf-title').value.trim();
       const desc  = document.getElementById('pdf-desc').value.trim();
-
-      if (!title)   throw new Error('タイトルを入力してください');
-      if (!pdfFile) throw new Error('PDFファイルを選択してください');
-
-      setProgress(50, true);
-      let thumbnail_url = null;
-      if (pdfThumb) thumbnail_url = await toDataUrl(pdfThumb);
-      setProgress(80, true);
-
-      payload = { title, href: null, description: desc || null, thumbnail_url, type: 'pdf' };
+      if (!title) throw new Error('タイトルを入力してください');
+      payload = { title, href: null, description: desc || null, thumbnail_url: selectedIcon, type: 'pdf' };
     }
 
-    setProgress(95, true);
+    setProgress(80, true);
     let error;
     if (editingId) {
-      // 編集モード：サムネを変えなかった場合は既存値を維持
-      if (!payload.thumbnail_url) delete payload.thumbnail_url;
       ({ error } = await db.from('posts').update(payload).eq('id', editingId));
     } else {
       ({ error } = await db.from('posts').insert([payload]));
@@ -478,32 +457,17 @@ function setProgress(pct, show) {
 function showErr(msg) { const el = document.getElementById('err-msg'); el.textContent = msg; el.style.display = 'block'; }
 function hideErr()    { document.getElementById('err-msg').style.display = 'none'; }
 
-// ── Drag & Drop ────────────────────────────────────────────────────────────
-['url-drop','pdf-drop'].forEach(id => {
-  const el = document.getElementById(id);
-  el.addEventListener('dragover', e => { e.preventDefault(); el.classList.add('drag'); });
-  el.addEventListener('dragleave', () => el.classList.remove('drag'));
-  el.addEventListener('drop', e => {
-    e.preventDefault(); el.classList.remove('drag');
-    const file = e.dataTransfer.files[0];
-    if (!file) return;
-    if (id === 'url-drop' && file.type.startsWith('image/')) {
-      const inp = document.getElementById('url-file');
-      const dt = new DataTransfer(); dt.items.add(file); inp.files = dt.files;
-      previewImg(inp, 'url-preview');
-    } else if (id === 'pdf-drop' && file.type === 'application/pdf') {
-      const inp = document.getElementById('pdf-file');
-      const dt = new DataTransfer(); dt.items.add(file); inp.files = dt.files;
-      onPdfSelect(inp);
-    }
-  });
-});
-
 // ── Boot ───────────────────────────────────────────────────────────────────
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', loadPosts);
-} else {
+function init() {
+  buildIconGrids();
+  setIconSelection(ICONS[0], 'url-icon-grid');
+  setIconSelection(ICONS[0], 'pdf-icon-grid');
   loadPosts();
+}
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', init);
+} else {
+  init();
 }
 </script>
 </body>
