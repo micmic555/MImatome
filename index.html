@@ -61,6 +61,14 @@
       display: flex; flex-direction: column; cursor: pointer;
     }
     .card:hover { box-shadow: 0 6px 24px rgba(0,0,0,.12); transform: translateY(-2px); }
+    .card-edit-btn {
+      position: absolute; top: 8px; right: 8px;
+      background: rgba(0,0,0,.55); color: #fff; border: none; border-radius: 5px;
+      font-size: 0.72rem; font-weight: 700; padding: 4px 9px; cursor: pointer;
+      z-index: 10; font-family: inherit; transition: background .15s;
+    }
+    .card-edit-btn:hover { background: rgba(0,0,0,.8); }
+    .card-wrap { position: relative; }
     .card-thumb { width: 100%; aspect-ratio: 16/9; object-fit: cover; background: #f4f4f4; display: block; }
     .card-placeholder {
       width: 100%; aspect-ratio: 16/9; background: #f4f4f4;
@@ -230,6 +238,8 @@ pdfjsLib.GlobalWorkerOptions.workerSrc =
 let tab        = 'url';
 let pdfFile    = null;
 let pdfThumb   = null;  // Blob
+let editingId  = null;  // 編集中の投稿ID (null = 新規)
+const postMap  = {};    // id → post object
 
 // ── Posts ──────────────────────────────────────────────────────────────────
 async function loadPosts() {
@@ -241,6 +251,7 @@ async function loadPosts() {
       grid.innerHTML = '<div class="state-msg">まだ投稿がありません。</div>';
       return;
     }
+    data.forEach(p => { postMap[p.id] = p; });
     grid.innerHTML = data.map(cardHtml).join('');
   } catch (e) {
     grid.innerHTML = `<div class="state-msg">⚠️ ${e.message}</div>`;
@@ -253,23 +264,60 @@ function cardHtml(p) {
   const thumb = p.thumbnail_url
     ? `<img class="card-thumb" src="${esc(p.thumbnail_url)}" alt="" loading="lazy">`
     : `<div class="card-placeholder">${icon}</div>`;
-  const href  = p.href ? `href="${esc(p.href)}" target="_blank" rel="noopener noreferrer"` : '';
+  const aHref = p.href ? `href="${esc(p.href)}" target="_blank" rel="noopener noreferrer"` : '';
   return `
-    <a class="card" ${href}>
-      ${thumb}
-      <div class="card-body">
-        <div class="card-type">${p.type === 'pdf' ? 'PDF' : 'URL'}</div>
-        <div class="card-title">${esc(p.title)}</div>
-        ${p.description ? `<div class="card-desc">${esc(p.description)}</div>` : ''}
-        <div class="card-date">${date}</div>
-      </div>
-    </a>`;
+    <div class="card-wrap">
+      <button class="card-edit-btn" onclick="openEdit('${p.id}')">編集</button>
+      <a class="card" ${aHref}>
+        ${thumb}
+        <div class="card-body">
+          <div class="card-type">${p.type === 'pdf' ? 'PDF' : 'URL'}</div>
+          <div class="card-title">${esc(p.title)}</div>
+          ${p.description ? `<div class="card-desc">${esc(p.description)}</div>` : ''}
+          <div class="card-date">${date}</div>
+        </div>
+      </a>
+    </div>`;
 }
 
 const esc = s => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 
 // ── Modal ──────────────────────────────────────────────────────────────────
-function openModal()  { resetForm(); document.getElementById('overlay').classList.add('open'); document.body.style.overflow = 'hidden'; }
+function openModal() {
+  resetForm();
+  document.querySelector('.modal h2').textContent = '新規投稿';
+  document.getElementById('btn-submit').textContent = '投稿する';
+  document.getElementById('overlay').classList.add('open');
+  document.body.style.overflow = 'hidden';
+}
+function openEdit(id) {
+  const p = postMap[id];
+  if (!p) return;
+  resetForm();
+  editingId = p.id;
+  document.querySelector('.modal h2').textContent = '投稿を編集';
+  document.getElementById('btn-submit').textContent = '更新する';
+  if (p.type === 'pdf') {
+    switchTab('pdf');
+    document.getElementById('pdf-title').value = p.title || '';
+    document.getElementById('pdf-desc').value  = p.description || '';
+    if (p.thumbnail_url) {
+      const prev = document.getElementById('pdf-preview');
+      prev.src = p.thumbnail_url; prev.style.display = 'block';
+    }
+  } else {
+    switchTab('url');
+    document.getElementById('url-title').value = p.title || '';
+    document.getElementById('url-link').value  = p.href  || '';
+    document.getElementById('url-desc').value  = p.description || '';
+    if (p.thumbnail_url) {
+      const prev = document.getElementById('url-preview');
+      prev.src = p.thumbnail_url; prev.style.display = 'block';
+    }
+  }
+  document.getElementById('overlay').classList.add('open');
+  document.body.style.overflow = 'hidden';
+}
 function closeModal() { document.getElementById('overlay').classList.remove('open'); document.body.style.overflow = ''; }
 function overlayClick(e) { if (e.target === document.getElementById('overlay')) closeModal(); }
 
@@ -288,7 +336,7 @@ function resetForm() {
   document.getElementById('pdf-file').value = '';
   document.getElementById('pdf-preview').style.display = 'none';
   document.getElementById('pdf-label').innerHTML = 'クリックまたはドラッグ&amp;ドロップ<br/><small>PDF ファイル</small>';
-  pdfFile = null; pdfThumb = null;
+  pdfFile = null; pdfThumb = null; editingId = null;
   setProgress(0, false); hideErr();
   switchTab('url');
   document.getElementById('btn-submit').disabled = false;
@@ -384,6 +432,7 @@ async function submitPost() {
       }
       setProgress(80, true);
       payload = { title, href: url, description: desc || null, thumbnail_url, type: 'url' };
+      if (!file && editingId) delete payload.thumbnail_url;
 
     } else {
       const title = document.getElementById('pdf-title').value.trim();
@@ -401,7 +450,14 @@ async function submitPost() {
     }
 
     setProgress(95, true);
-    const { error } = await db.from('posts').insert([payload]);
+    let error;
+    if (editingId) {
+      // 編集モード：サムネを変えなかった場合は既存値を維持
+      if (!payload.thumbnail_url) delete payload.thumbnail_url;
+      ({ error } = await db.from('posts').update(payload).eq('id', editingId));
+    } else {
+      ({ error } = await db.from('posts').insert([payload]));
+    }
     if (error) throw new Error(error.message);
 
     setProgress(100, true);
