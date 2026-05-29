@@ -490,9 +490,9 @@ async function submitPost() {
       if (pdfFile) {
         setProgress(40, true);
         const fname = `${Date.now()}_${Math.random().toString(36).slice(2)}.pdf`;
-        const { error: upErr } = await db.storage.from('pdfs').upload(fname, pdfFile, { contentType: 'application/pdf' });
+        const { error: upErr } = await db.storage.from('pdf').upload(fname, pdfFile, { contentType: 'application/pdf' });
         if (upErr) throw new Error('PDFのアップロードに失敗しました。Supabase Storage に "pdfs" バケットが存在するか確認してください。(' + upErr.message + ')');
-        href = db.storage.from('pdfs').getPublicUrl(fname).data.publicUrl;
+        href = db.storage.from('pdf').getPublicUrl(fname).data.publicUrl;
       } else if (!editingId) {
         throw new Error('PDFファイルを選択してください');
       }
