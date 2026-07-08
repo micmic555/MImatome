@@ -1,0 +1,596 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MI 社内掲示板</title>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Hiragino Kaku Gothic ProN', 'Noto Sans JP', 'Yu Gothic', sans-serif;
+      background: #fff;
+      color: #1a1a1a;
+      min-height: 100vh;
+    }
+
+    /* ── HEADER ── */
+    header {
+      background: #fff;
+      border-bottom: 2px solid #000;
+      padding: 0 24px;
+      display: flex;
+      align-items: center;
+      gap: 20px;
+      height: 64px;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+    .logo { font-size: 2rem; font-weight: 900; letter-spacing: -2px; line-height: 1; }
+    .hdivider { width: 1px; height: 36px; background: #ccc; }
+    .vision { font-size: 1.1rem; font-weight: 700; letter-spacing: 1px; color: #2a7a2a; }
+    .mission { font-size: 0.78rem; color: #555; font-weight: 500; white-space: nowrap; }
+    .spacer { flex: 1; }
+    .btn-add {
+      background: #000; color: #fff; border: none; border-radius: 6px;
+      padding: 8px 18px; font-size: 0.85rem; font-weight: 700;
+      cursor: pointer; white-space: nowrap; transition: background .15s;
+    }
+    .btn-add:hover { background: #333; }
+
+    /* ── MAIN ── */
+    main { max-width: 1200px; margin: 0 auto; padding: 28px 20px 60px; }
+
+    /* ── GRID ── */
+    .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
+    @media (max-width: 900px) { .grid { grid-template-columns: repeat(2, 1fr); } }
+    @media (max-width: 560px) {
+      .grid { grid-template-columns: 1fr; }
+      .mission { display: none; }
+      header { gap: 10px; }
+    }
+
+    /* ── CARD ── */
+    .card {
+      border: 1.5px solid #e0e0e0; border-radius: 10px; overflow: hidden;
+      background: #fff; transition: box-shadow .2s, transform .2s;
+      text-decoration: none; color: inherit;
+      display: flex; flex-direction: column; cursor: pointer;
+    }
+    .card:hover { box-shadow: 0 6px 24px rgba(0,0,0,.12); transform: translateY(-2px); }
+    .card-edit-btn {
+      position: absolute; top: 8px; right: 8px;
+      background: rgba(0,0,0,.55); color: #fff; border: none; border-radius: 5px;
+      font-size: 0.72rem; font-weight: 700; padding: 4px 9px; cursor: pointer;
+      z-index: 10; font-family: inherit; transition: background .15s;
+    }
+    .card-edit-btn:hover { background: rgba(0,0,0,.8); }
+    .card-del-btn {
+      position: absolute; top: 8px; right: 60px;
+      background: rgba(180,0,0,.6); color: #fff; border: none; border-radius: 5px;
+      font-size: 0.72rem; font-weight: 700; padding: 4px 9px; cursor: pointer;
+      z-index: 10; font-family: inherit; transition: background .15s;
+    }
+    .card-del-btn:hover { background: rgba(180,0,0,.9); }
+    .card-wrap {
+      position: relative; cursor: grab;
+      transition: opacity .2s, transform .2s;
+    }
+    .card-wrap.dragging { opacity: 0.35; transform: scale(0.97); cursor: grabbing; }
+    .card-wrap.drag-over > .card {
+      outline: 2.5px dashed #000; outline-offset: 2px;
+    }
+    .card-thumb { width: 100%; aspect-ratio: 16/9; object-fit: cover; background: #f4f4f4; display: block; }
+    .card-placeholder {
+      width: 100%; aspect-ratio: 16/9; background: #f4f4f4;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 2.2rem; color: #bbb;
+    }
+    .card-body { padding: 14px 16px 16px; flex: 1; display: flex; flex-direction: column; gap: 5px; }
+    .card-type { font-size: 0.68rem; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; color: #888; }
+    .card-title {
+      font-size: 0.95rem; font-weight: 700; line-height: 1.4;
+      display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+    }
+    .card-desc {
+      font-size: 0.78rem; color: #666; line-height: 1.5;
+      display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+    }
+    .card-date { font-size: 0.7rem; color: #aaa; margin-top: auto; padding-top: 8px; }
+
+    /* ── STATE ── */
+    .state-msg { grid-column: 1/-1; text-align: center; padding: 60px 20px; color: #aaa; font-size: 0.95rem; }
+
+    /* ── OVERLAY / MODAL ── */
+    .overlay {
+      display: none; position: fixed; inset: 0;
+      background: rgba(0,0,0,.45); z-index: 200;
+      align-items: center; justify-content: center; padding: 20px;
+    }
+    .overlay.open { display: flex; }
+    .modal {
+      background: #fff; border-radius: 12px; width: 100%; max-width: 480px;
+      padding: 28px 28px 24px; position: relative; max-height: 90vh; overflow-y: auto;
+    }
+    .modal h2 { font-size: 1.1rem; font-weight: 800; margin-bottom: 20px; }
+    .modal-close {
+      position: absolute; top: 16px; right: 20px;
+      background: none; border: none; font-size: 1.4rem; cursor: pointer; color: #666;
+    }
+
+    /* ── TABS ── */
+    .tabs {
+      display: flex; border: 1.5px solid #000; border-radius: 6px;
+      overflow: hidden; margin-bottom: 20px;
+    }
+    .tab {
+      flex: 1; padding: 9px; text-align: center; font-size: 0.85rem;
+      font-weight: 700; cursor: pointer; background: #fff; border: none;
+      transition: background .15s; font-family: inherit;
+    }
+    .tab.active { background: #000; color: #fff; }
+
+    /* ── FORM ── */
+    label { display: block; font-size: 0.8rem; font-weight: 700; margin-bottom: 4px; margin-top: 14px; }
+    label:first-of-type { margin-top: 0; }
+    input[type="text"], input[type="url"], textarea {
+      width: 100%; border: 1.5px solid #ccc; border-radius: 6px;
+      padding: 9px 12px; font-size: 0.88rem; font-family: inherit; outline: none;
+      transition: border-color .15s;
+    }
+    input:focus, textarea:focus { border-color: #000; }
+    textarea { min-height: 70px; resize: vertical; }
+
+    /* ── FILE PICK ── */
+    .file-pick-wrap { display: flex; align-items: center; gap: 10px; margin-top: 6px; }
+    .file-pick-btn {
+      display: inline-block; background: #f0f0f0; border: 1.5px solid #ccc; border-radius: 6px;
+      padding: 8px 14px; font-size: 0.82rem; font-weight: 700; cursor: pointer;
+      white-space: nowrap; transition: background .15s; font-family: inherit;
+    }
+    .file-pick-btn:hover { background: #e0e0e0; border-color: #999; }
+    .file-name-label { font-size: 0.78rem; color: #666; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+    .pdf-current-wrap { font-size: 0.78rem; color: #555; margin-top: 6px; }
+    .pdf-current-wrap a { color: #2a7a2a; font-weight: 700; text-decoration: underline; }
+
+    /* ── ICON PICKER ── */
+    .icon-grid {
+      display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; margin-top: 6px;
+    }
+    .icon-btn {
+      aspect-ratio: 1; border: 2px solid #e0e0e0; border-radius: 8px; background: #fafafa;
+      font-size: 1.5rem; cursor: pointer; display: flex; align-items: center;
+      justify-content: center; transition: border-color .15s, background .15s;
+    }
+    .icon-btn:hover  { border-color: #999; background: #f0f0f0; }
+    .icon-btn.chosen { border-color: #000; background: #f0f0f0; box-shadow: 0 0 0 2px #000; }
+
+    .progress-wrap { height: 4px; background: #eee; border-radius: 2px; overflow: hidden; margin-top: 12px; display: none; }
+    .progress-bar { height: 100%; background: #000; width: 0%; transition: width .3s; }
+
+    .err-msg { margin-top: 10px; font-size: 0.78rem; color: #c00; display: none; }
+
+    .btn-submit {
+      width: 100%; margin-top: 20px; background: #000; color: #fff; border: none;
+      border-radius: 8px; padding: 12px; font-size: 0.95rem; font-weight: 700;
+      cursor: pointer; font-family: inherit; transition: background .15s;
+    }
+    .btn-submit:hover:not(:disabled) { background: #333; }
+    .btn-submit:disabled { background: #999; cursor: not-allowed; }
+    /* ── LOGIN ── */
+    #login-screen {
+      position: fixed; inset: 0; background: #fff; z-index: 9999;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .login-box {
+      width: 100%; max-width: 320px; padding: 0 24px;
+      display: flex; flex-direction: column; align-items: center; gap: 16px;
+    }
+    .login-logo { font-size: 3rem; font-weight: 900; letter-spacing: -3px; margin-bottom: 8px; }
+    .login-box input[type="password"] {
+      width: 100%; border: 1.5px solid #ccc; border-radius: 8px;
+      padding: 12px 16px; font-size: 1.1rem; text-align: center;
+      letter-spacing: 4px; outline: none; transition: border-color .15s;
+    }
+    .login-box input[type="password"]:focus { border-color: #000; }
+    .login-btn {
+      width: 100%; background: #000; color: #fff; border: none; border-radius: 8px;
+      padding: 12px; font-size: 0.95rem; font-weight: 700; cursor: pointer;
+      font-family: inherit; transition: background .15s;
+    }
+    .login-btn:hover { background: #333; }
+    .login-err { font-size: 0.8rem; color: #c00; min-height: 1em; }
+  </style>
+</head>
+<body>
+
+<!-- LOGIN -->
+<div id="login-screen">
+  <div class="login-box">
+    <div class="login-logo">MI</div>
+    <input type="password" id="login-pw" placeholder="パスワード" onkeydown="if(event.key==='Enter')doLogin()" />
+    <button class="login-btn" onclick="doLogin()">ログイン</button>
+    <div class="login-err" id="login-err"></div>
+  </div>
+</div>
+
+<header>
+  <div class="logo">MI</div>
+  <div class="hdivider"></div>
+  <div>
+    <div class="vision">+SMILE</div>
+    <div class="mission">美と健康のチカラで人生を楽しく</div>
+  </div>
+  <div class="spacer"></div>
+  <button class="btn-add" onclick="openModal()">＋ 投稿する</button>
+</header>
+
+<main>
+  <div class="grid" id="grid">
+    <div class="state-msg" id="loading">読み込み中...</div>
+  </div>
+</main>
+
+<!-- MODAL -->
+<div class="overlay" id="overlay" onclick="overlayClick(event)">
+  <div class="modal">
+    <button class="modal-close" onclick="closeModal()">×</button>
+    <h2>新規投稿</h2>
+
+    <div class="tabs">
+      <button class="tab active" id="tab-url" onclick="switchTab('url')">🔗 URL</button>
+      <button class="tab"        id="tab-pdf" onclick="switchTab('pdf')">📄 PDF</button>
+    </div>
+
+    <!-- URL フォーム -->
+    <div id="form-url">
+      <label>タイトル *</label>
+      <input type="text" id="url-title" placeholder="記事タイトル" maxlength="100" />
+      <label>URL *</label>
+      <input type="url" id="url-link" placeholder="https://example.com" />
+      <label>説明</label>
+      <textarea id="url-desc" placeholder="内容の説明（任意）"></textarea>
+      <label>アイコン</label>
+      <div class="icon-grid" id="url-icon-grid"></div>
+    </div>
+
+    <!-- PDF フォーム -->
+    <div id="form-pdf" style="display:none">
+      <label>タイトル *</label>
+      <input type="text" id="pdf-title" placeholder="資料タイトル" maxlength="100" />
+      <label>PDFファイル *</label>
+      <div class="file-pick-wrap">
+        <label class="file-pick-btn" for="pdf-file">📎 ファイルを選択</label>
+        <input type="file" id="pdf-file" accept=".pdf,application/pdf" style="display:none" onchange="onPdfPick(this)" />
+        <span id="pdf-file-name" class="file-name-label">未選択</span>
+      </div>
+      <div id="pdf-current" style="display:none" class="pdf-current-wrap">
+        現在のファイル: <a id="pdf-current-link" target="_blank" rel="noopener noreferrer">開く</a>（新しいファイルを選択すると差し替えます）
+      </div>
+      <label>説明</label>
+      <textarea id="pdf-desc" placeholder="内容の説明（任意）"></textarea>
+      <label>アイコン</label>
+      <div class="icon-grid" id="pdf-icon-grid"></div>
+    </div>
+
+    <div class="progress-wrap" id="progress-wrap"><div class="progress-bar" id="progress-bar"></div></div>
+    <div class="err-msg" id="err-msg"></div>
+    <button class="btn-submit" id="btn-submit" onclick="submitPost()">投稿する</button>
+  </div>
+</div>
+
+<script>
+// ── Supabase ───────────────────────────────────────────────────────────────
+const _url = 'https://qvtgvqfdiiawqessyflz.supabase.co';
+const _key = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF2dGd2cWZkaWlhd3Flc3N5Zmx6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODAwMjM4MTQsImV4cCI6MjA5NTU5OTgxNH0.n870a4Zo4ObnOWeiD14vbPKZYt3SepcZlZLPexQlvpU';
+const db   = supabase.createClient(_url, _key);
+
+// ── State ──────────────────────────────────────────────────────────────────
+let tab       = 'url';
+let editingId = null;
+const postMap = {};
+let sortedIds = [];   // current display order
+let dragSrcId = null; // id being dragged
+let pdfFile   = null; // selected PDF file
+
+// ── Order (localStorage) ───────────────────────────────────────────────────
+const ORDER_KEY = 'mi_board_order';
+function getSavedOrder()   { try { return JSON.parse(localStorage.getItem(ORDER_KEY)) || []; } catch { return []; } }
+function saveOrder(ids)    { localStorage.setItem(ORDER_KEY, JSON.stringify(ids)); }
+function applyOrder(data) {
+  const saved = getSavedOrder();
+  if (!saved.length) return data;
+  const idx = Object.fromEntries(saved.map((id, i) => [id, i]));
+  return [...data].sort((a, b) => {
+    const ai = idx[a.id] ?? Infinity, bi = idx[b.id] ?? Infinity;
+    return ai !== bi ? ai - bi : 0;
+  });
+}
+
+// ── Icons ──────────────────────────────────────────────────────────────────
+const ICONS = ['📊','📈','📋','📁','📌','📣','💡','🎯','✅','🔔','📧','📝',
+               '🏆','👥','💼','🛒','💰','🔍','⚙️','🌐','📱','🤝','🎉','❤️'];
+
+function buildIconGrids() {
+  ['url-icon-grid','pdf-icon-grid'].forEach(gid => {
+    document.getElementById(gid).innerHTML = ICONS.map(ic =>
+      `<button type="button" class="icon-btn" data-icon="${ic}" onclick="selectIcon(this,'${gid}')">${ic}</button>`
+    ).join('');
+  });
+}
+
+function selectIcon(btn, gid) {
+  document.querySelectorAll('#' + gid + ' .icon-btn').forEach(b => b.classList.remove('chosen'));
+  btn.classList.add('chosen');
+}
+
+function getSelectedIcon(gid) {
+  const btn = document.querySelector('#' + gid + ' .icon-btn.chosen');
+  return btn ? btn.dataset.icon : ICONS[0];
+}
+
+function setIconSelection(icon, gid) {
+  // ICONS内の絵文字と一致するものを選択、なければ先頭
+  const target = ICONS.includes(icon) ? icon : ICONS[0];
+  document.querySelectorAll('#' + gid + ' .icon-btn').forEach(b => {
+    b.classList.toggle('chosen', b.dataset.icon === target);
+  });
+}
+
+// ── Posts ──────────────────────────────────────────────────────────────────
+async function loadPosts() {
+  const grid = document.getElementById('grid');
+  try {
+    const { data, error } = await db.from('posts').select('*').order('created_at', { ascending: false });
+    if (error) throw new Error(error.message);
+    if (!data || !data.length) {
+      grid.innerHTML = '<div class="state-msg">まだ投稿がありません。</div>';
+      return;
+    }
+    data.forEach(p => { postMap[p.id] = p; });
+    const ordered = applyOrder(data);
+    sortedIds = ordered.map(p => p.id);
+    grid.innerHTML = ordered.map(cardHtml).join('');
+    initDrag();
+  } catch (e) {
+    grid.innerHTML = `<div class="state-msg">⚠️ ${e.message}</div>`;
+  }
+}
+
+function cardHtml(p) {
+  const date  = new Date(p.created_at).toLocaleDateString('ja-JP', { year:'numeric', month:'short', day:'numeric' });
+  const thumb = p.thumbnail_url
+    ? `<div class="card-placeholder" style="font-size:3.5rem">${p.thumbnail_url}</div>`
+    : `<div class="card-placeholder">${p.type === 'pdf' ? '📄' : '🔗'}</div>`;
+  const aHref = p.href ? `href="${esc(p.href)}" target="_blank" rel="noopener noreferrer"` : '';
+  return `
+    <div class="card-wrap" data-id="${p.id}" draggable="true">
+      <button class="card-del-btn" onclick="deletePost(${p.id})">削除</button>
+      <button class="card-edit-btn" onclick="openEdit(${p.id})">編集</button>
+      <a class="card" ${aHref}>
+        ${thumb}
+        <div class="card-body">
+          <div class="card-type">${p.type === 'pdf' ? 'PDF' : 'URL'}</div>
+          <div class="card-title">${esc(p.title)}</div>
+          ${p.description ? `<div class="card-desc">${esc(p.description)}</div>` : ''}
+          <div class="card-date">${date}</div>
+        </div>
+      </a>
+    </div>`;
+}
+
+// ── Drag & drop ────────────────────────────────────────────────────────────
+function initDrag() {
+  document.querySelectorAll('.card-wrap').forEach(wrap => {
+    wrap.addEventListener('dragstart', e => {
+      dragSrcId = +wrap.dataset.id;
+      wrap.classList.add('dragging');
+      e.dataTransfer.effectAllowed = 'move';
+    });
+    wrap.addEventListener('dragend', () => {
+      document.querySelectorAll('.card-wrap').forEach(w => {
+        w.classList.remove('dragging', 'drag-over');
+      });
+    });
+    wrap.addEventListener('dragover', e => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      if (+wrap.dataset.id !== dragSrcId) wrap.classList.add('drag-over');
+    });
+    wrap.addEventListener('dragleave', () => wrap.classList.remove('drag-over'));
+    wrap.addEventListener('drop', e => {
+      e.preventDefault();
+      wrap.classList.remove('drag-over');
+      const targetId = +wrap.dataset.id;
+      if (dragSrcId === targetId) return;
+      const srcIdx = sortedIds.indexOf(dragSrcId);
+      const tgtIdx = sortedIds.indexOf(targetId);
+      sortedIds.splice(srcIdx, 1);
+      sortedIds.splice(tgtIdx, 0, dragSrcId);
+      saveOrder(sortedIds);
+      // Re-render in new order without refetching
+      const grid = document.getElementById('grid');
+      grid.innerHTML = sortedIds.map(id => postMap[id]).filter(Boolean).map(cardHtml).join('');
+      initDrag();
+    });
+  });
+}
+
+// ── Delete ─────────────────────────────────────────────────────────────────
+async function deletePost(id) {
+  if (!confirm('この投稿を削除しますか？')) return;
+  const { error } = await db.from('posts').delete().eq('id', id);
+  if (error) { alert('削除に失敗しました: ' + error.message); return; }
+  sortedIds = sortedIds.filter(i => i !== id);
+  saveOrder(sortedIds);
+  delete postMap[id];
+  const grid = document.getElementById('grid');
+  if (!sortedIds.length) { grid.innerHTML = '<div class="state-msg">まだ投稿がありません。</div>'; return; }
+  grid.innerHTML = sortedIds.map(i => postMap[i]).filter(Boolean).map(cardHtml).join('');
+  initDrag();
+}
+
+const esc = s => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+
+// ── Modal ──────────────────────────────────────────────────────────────────
+function openModal() {
+  resetForm();
+  document.querySelector('.modal h2').textContent = '新規投稿';
+  document.getElementById('btn-submit').textContent = '投稿する';
+  document.getElementById('overlay').classList.add('open');
+  document.body.style.overflow = 'hidden';
+}
+function openEdit(id) {
+  const p = postMap[id];
+  if (!p) return;
+  resetForm();
+  editingId = p.id;
+  document.querySelector('.modal h2').textContent = '投稿を編集';
+  document.getElementById('btn-submit').textContent = '更新する';
+  if (p.type === 'pdf') {
+    switchTab('pdf');
+    document.getElementById('pdf-title').value = p.title || '';
+    document.getElementById('pdf-desc').value  = p.description || '';
+    setIconSelection(p.thumbnail_url, 'pdf-icon-grid');
+    if (p.href) {
+      document.getElementById('pdf-current').style.display = '';
+      document.getElementById('pdf-current-link').href = p.href;
+    }
+  } else {
+    switchTab('url');
+    document.getElementById('url-title').value = p.title || '';
+    document.getElementById('url-link').value  = p.href  || '';
+    document.getElementById('url-desc').value  = p.description || '';
+    setIconSelection(p.thumbnail_url, 'url-icon-grid');
+  }
+  document.getElementById('overlay').classList.add('open');
+  document.body.style.overflow = 'hidden';
+}
+function closeModal() { document.getElementById('overlay').classList.remove('open'); document.body.style.overflow = ''; }
+function overlayClick(e) { if (e.target === document.getElementById('overlay')) closeModal(); }
+
+function switchTab(t) {
+  tab = t;
+  document.getElementById('form-url').style.display = t === 'url' ? '' : 'none';
+  document.getElementById('form-pdf').style.display = t === 'pdf' ? '' : 'none';
+  document.getElementById('tab-url').classList.toggle('active', t === 'url');
+  document.getElementById('tab-pdf').classList.toggle('active', t === 'pdf');
+}
+
+function resetForm() {
+  ['url-title','url-link','url-desc','pdf-title','pdf-desc'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+  editingId = null; pdfFile = null;
+  const fi = document.getElementById('pdf-file'); if (fi) fi.value = '';
+  document.getElementById('pdf-file-name').textContent = '未選択';
+  document.getElementById('pdf-current').style.display = 'none';
+  setProgress(0, false); hideErr();
+  switchTab('url');
+  setIconSelection(ICONS[0], 'url-icon-grid');
+  setIconSelection(ICONS[0], 'pdf-icon-grid');
+  document.getElementById('btn-submit').disabled = false;
+}
+
+function onPdfPick(input) {
+  if (!input.files[0]) return;
+  pdfFile = input.files[0];
+  document.getElementById('pdf-file-name').textContent = pdfFile.name;
+}
+
+
+// ── Submit ─────────────────────────────────────────────────────────────────
+async function submitPost() {
+  hideErr();
+  const btn = document.getElementById('btn-submit');
+  btn.disabled = true;
+
+  try {
+    let payload;
+
+    if (tab === 'url') {
+      const title = document.getElementById('url-title').value.trim();
+      const url   = document.getElementById('url-link').value.trim();
+      const desc  = document.getElementById('url-desc').value.trim();
+      if (!title) throw new Error('タイトルを入力してください');
+      if (!url || !/^https?:\/\/.+/.test(url)) throw new Error('有効なURLを入力してください');
+      payload = { title, href: url, description: desc || null, thumbnail_url: getSelectedIcon('url-icon-grid'), type: 'url' };
+    } else {
+      const title = document.getElementById('pdf-title').value.trim();
+      const desc  = document.getElementById('pdf-desc').value.trim();
+      if (!title) throw new Error('タイトルを入力してください');
+      let href = editingId ? (postMap[editingId]?.href || null) : null;
+      if (pdfFile) {
+        setProgress(40, true);
+        const fname = `${Date.now()}_${Math.random().toString(36).slice(2)}.pdf`;
+        const { error: upErr } = await db.storage.from('pdf').upload(fname, pdfFile, { contentType: 'application/pdf' });
+        if (upErr) throw new Error('PDFのアップロードに失敗しました: ' + upErr.message);
+        href = db.storage.from('pdf').getPublicUrl(fname).data.publicUrl;
+      } else if (!editingId) {
+        throw new Error('PDFファイルを選択してください');
+      }
+      payload = { title, href, description: desc || null, thumbnail_url: getSelectedIcon('pdf-icon-grid'), type: 'pdf' };
+    }
+
+    setProgress(80, true);
+    let error, data;
+    if (editingId) {
+      ({ data, error } = await db.from('posts').update(payload).eq('id', editingId).select());
+      if (!error && (!data || data.length === 0)) {
+        throw new Error('更新できませんでした。Supabase の RLS ポリシーで UPDATE 権限を確認してください。');
+      }
+    } else {
+      ({ error } = await db.from('posts').insert([payload]));
+    }
+    if (error) throw new Error(error.message);
+
+    setProgress(100, true);
+    setTimeout(() => { closeModal(); loadPosts(); }, 400);
+
+  } catch (e) {
+    showErr(e.message);
+    btn.disabled = false;
+    setProgress(0, false);
+  }
+}
+
+// ── UI helpers ─────────────────────────────────────────────────────────────
+function setProgress(pct, show) {
+  document.getElementById('progress-wrap').style.display = show ? 'block' : 'none';
+  document.getElementById('progress-bar').style.width = pct + '%';
+}
+function showErr(msg) { const el = document.getElementById('err-msg'); el.textContent = msg; el.style.display = 'block'; }
+function hideErr()    { document.getElementById('err-msg').style.display = 'none'; }
+
+// ── Login ──────────────────────────────────────────────────────────────────
+const _PW = '111';
+function doLogin() {
+  const val = document.getElementById('login-pw').value;
+  if (val === _PW) {
+    sessionStorage.setItem('mi_auth', '1');
+    document.getElementById('login-screen').style.display = 'none';
+  } else {
+    document.getElementById('login-err').textContent = 'パスワードが違います';
+    document.getElementById('login-pw').value = '';
+    document.getElementById('login-pw').focus();
+  }
+}
+
+// ── Boot ───────────────────────────────────────────────────────────────────
+function init() {
+  if (sessionStorage.getItem('mi_auth') === '1') {
+    document.getElementById('login-screen').style.display = 'none';
+  }
+  buildIconGrids();
+  setIconSelection(ICONS[0], 'url-icon-grid');
+  setIconSelection(ICONS[0], 'pdf-icon-grid');
+  loadPosts();
+}
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', init);
+} else {
+  init();
+}
+</script>
+</body>
+</html>
